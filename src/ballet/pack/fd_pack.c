@@ -664,6 +664,7 @@ fd_pack_insert_txn_fini( fd_pack_t  * pack,
 
   fd_txn_t * txn   = TXN(txnp);
   uchar * payload  = txnp->payload;
+  txnp->flags = 0U; /* clear any old flags */
 
   fd_acct_addr_t const * accts = fd_txn_get_acct_addrs( txn, payload );
   ulong imm_cnt = fd_txn_account_cnt( txn, FD_TXN_ACCT_CAT_IMM );
