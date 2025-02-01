@@ -130,6 +130,10 @@
 | Metric | Type | Description |
 |--------|------|-------------|
 | resolv_&#8203;no_&#8203;bank_&#8203;drop | `counter` | Count of transactions dropped because the bank was not available |
+| resolv_&#8203;stash_&#8203;operation_&#8203;inserted | `counter` | Count of operations that happened on the transaction stash (A transaction with an unknown blockhash was added to the stash) |
+| resolv_&#8203;stash_&#8203;operation_&#8203;overrun | `counter` | Count of operations that happened on the transaction stash (A transaction with an unknown blockhash was dropped because the stash was full) |
+| resolv_&#8203;stash_&#8203;operation_&#8203;published | `counter` | Count of operations that happened on the transaction stash (A transaction with an unknown blockhash was published as the blockhash became known) |
+| resolv_&#8203;stash_&#8203;operation_&#8203;removed | `counter` | Count of operations that happened on the transaction stash (A transaction with an unknown blockhash was removed from the stash without publishing, due to a bad LUT resolved failure, or no bank. These errors are double counted with the respective metrics for those categories.) |
 | resolv_&#8203;lut_&#8203;resolved_&#8203;invalid_&#8203;lookup_&#8203;index | `counter` | Count of address lookup tables resolved (The transaction referenced an index in a LUT that didn't exist) |
 | resolv_&#8203;lut_&#8203;resolved_&#8203;account_&#8203;uninitialized | `counter` | Count of address lookup tables resolved (The account referenced as a LUT hasn't been initialized) |
 | resolv_&#8203;lut_&#8203;resolved_&#8203;invalid_&#8203;account_&#8203;data | `counter` | Count of address lookup tables resolved (The account referenced as a LUT couldn't be parsed) |
@@ -137,7 +141,6 @@
 | resolv_&#8203;lut_&#8203;resolved_&#8203;account_&#8203;not_&#8203;found | `counter` | Count of address lookup tables resolved (The account referenced as a LUT couldn't be found) |
 | resolv_&#8203;lut_&#8203;resolved_&#8203;success | `counter` | Count of address lookup tables resolved (Resolved successfully) |
 | resolv_&#8203;blockhash_&#8203;expired | `counter` | Count of transactions that failed to resolve because the blockhash was expired |
-| resolv_&#8203;blockhash_&#8203;unknown | `counter` | Count of transactions with an unknown blockhash. These may be very recent, very old, nonces, or bogus. |
 
 ## Pack Tile
 | Metric | Type | Description |
@@ -197,6 +200,7 @@
 | pack_&#8203;transaction_&#8203;schedule_&#8203;byte_&#8203;limit | `counter` | Result of trying to consider a transaction for scheduling (Pack skipped the transaction because it would have exceeded the block data size limit) |
 | pack_&#8203;transaction_&#8203;schedule_&#8203;write_&#8203;cost | `counter` | Result of trying to consider a transaction for scheduling (Pack skipped the transaction because it would have caused a writable account to exceed the per-account block write cost limit) |
 | pack_&#8203;transaction_&#8203;schedule_&#8203;slow_&#8203;path | `counter` | Result of trying to consider a transaction for scheduling (Pack skipped the transaction because of account conflicts using the full slow check) |
+| pack_&#8203;transaction_&#8203;schedule_&#8203;defer_&#8203;skip | `counter` | Result of trying to consider a transaction for scheduling (Pack skipped the transaction it previously exceeded the per-account block write cost limit too many times) |
 | pack_&#8203;cus_&#8203;consumed_&#8203;in_&#8203;block | `gauge` | The number of cost units consumed in the current block, or 0 if pack is not currently packing a block |
 | pack_&#8203;cus_&#8203;scheduled | `histogram` | The number of cost units scheduled for each block pack produced.  This can be higher than the block limit because of returned CUs. |
 | pack_&#8203;cus_&#8203;rebated | `histogram` | The number of compute units rebated for each block pack produced.  Compute units are rebated when a transaction fails prior to execution or requests more compute units than it uses. |

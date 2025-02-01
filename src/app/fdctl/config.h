@@ -118,6 +118,7 @@ typedef struct {
   } rpc;
 
   struct {
+    int  enabled;
     int  incremental_snapshots;
     uint full_snapshot_interval_slots;
     uint incremental_snapshot_interval_slots;
@@ -132,6 +133,7 @@ typedef struct {
     char affinity[ AFFINITY_SZ ];
     char agave_affinity[ AFFINITY_SZ ];
 
+    uint agave_unified_scheduler_handler_threads;
     uint net_tile_count;
     uint quic_tile_count;
     uint resolv_tile_count;

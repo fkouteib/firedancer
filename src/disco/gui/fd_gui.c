@@ -6,6 +6,7 @@
 
 #include "../../ballet/base58/fd_base58.h"
 #include "../../ballet/json/cJSON.h"
+#include "../../flamenco/genesis/fd_genesis_cluster.h"
 
 FD_FN_CONST ulong
 fd_gui_align( void ) {
@@ -281,18 +282,29 @@ fd_gui_txn_waterfall_snap( fd_gui_t *               gui,
                               + pack_metrics[ MIDX( COUNTER, PACK, TRANSACTION_DROPPED_FROM_EXTRA ) ];
   cur->out.pack_retained += fd_ulong_if( inserted_to_extra>=inserted_from_extra, inserted_to_extra-inserted_from_extra, 0UL );
 
-  cur->out.resolv_failed = 0UL;
+  cur->out.resolv_lut_failed = 0UL;
+  cur->out.resolv_expired    = 0UL;
+  cur->out.resolv_ancient    = 0UL;
+  cur->out.resolv_no_ledger  = 0UL;
+  cur->out.resolv_retained   = 0UL;
   for( ulong i=0UL; i<gui->summary.resolv_tile_cnt; i++ ) {
     fd_topo_tile_t const * resolv = &topo->tiles[ fd_topo_find_tile( topo, "resolv", i ) ];
     volatile ulong const * resolv_metrics = fd_metrics_tile( resolv->metrics );
 
-    cur->out.resolv_failed += resolv_metrics[ MIDX( COUNTER, RESOLV, NO_BANK_DROP ) ] +
-                              resolv_metrics[ MIDX( COUNTER, RESOLV, BLOCKHASH_EXPIRED ) ];
-    cur->out.resolv_failed += resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_ACCOUNT_NOT_FOUND ) ]
-                            + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_INVALID_ACCOUNT_OWNER ) ]
-                            + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_INVALID_ACCOUNT_DATA ) ]
-                            + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_ACCOUNT_UNINITIALIZED ) ]
-                            + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_INVALID_LOOKUP_INDEX ) ];
+    cur->out.resolv_no_ledger += resolv_metrics[ MIDX( COUNTER, RESOLV, NO_BANK_DROP ) ];
+    cur->out.resolv_expired += resolv_metrics[ MIDX( COUNTER, RESOLV, BLOCKHASH_EXPIRED ) ];
+    cur->out.resolv_lut_failed += resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_ACCOUNT_NOT_FOUND ) ]
+                                + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_INVALID_ACCOUNT_OWNER ) ]
+                                + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_INVALID_ACCOUNT_DATA ) ]
+                                + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_ACCOUNT_UNINITIALIZED ) ]
+                                + resolv_metrics[ MIDX( COUNTER, RESOLV, LUT_RESOLVED_INVALID_LOOKUP_INDEX ) ];
+    cur->out.resolv_ancient += resolv_metrics[ MIDX( COUNTER, RESOLV, STASH_OPERATION_OVERRUN ) ];
+
+    ulong inserted_to_resolv = resolv_metrics[ MIDX( COUNTER, RESOLV, STASH_OPERATION_INSERTED ) ];
+    ulong removed_from_resolv = resolv_metrics[ MIDX( COUNTER, RESOLV, STASH_OPERATION_OVERRUN ) ]
+                              + resolv_metrics[ MIDX( COUNTER, RESOLV, STASH_OPERATION_PUBLISHED ) ]
+                              + resolv_metrics[ MIDX( COUNTER, RESOLV, STASH_OPERATION_REMOVED ) ];
+    cur->out.resolv_retained += fd_ulong_if( inserted_to_resolv>=removed_from_resolv, inserted_to_resolv-removed_from_resolv, 0UL );
   }
 
 
@@ -891,6 +903,7 @@ fd_gui_clear_slot( fd_gui_t * gui,
   slot->compute_units          = ULONG_MAX;
   slot->transaction_fee        = ULONG_MAX;
   slot->priority_fee           = ULONG_MAX;
+  slot->tips                   = ULONG_MAX;
   slot->leader_state           = FD_GUI_SLOT_LEADER_UNSTARTED;
   slot->completed_time         = LONG_MAX;
 
@@ -1171,15 +1184,16 @@ fd_gui_handle_reset_slot( fd_gui_t * gui,
 static void
 fd_gui_handle_completed_slot( fd_gui_t * gui,
                               ulong *    msg ) {
-  ulong _slot = msg[ 0 ];
-  ulong total_txn_count = msg[ 1 ];
-  ulong nonvote_txn_count = msg[ 2 ];
-  ulong failed_txn_count = msg[ 3 ];
+  ulong _slot                    = msg[ 0 ];
+  ulong total_txn_count          = msg[ 1 ];
+  ulong nonvote_txn_count        = msg[ 2 ];
+  ulong failed_txn_count         = msg[ 3 ];
   ulong nonvote_failed_txn_count = msg[ 4 ];
-  ulong compute_units = msg[ 5 ];
-  ulong transaction_fee = msg[ 6 ];
-  ulong priority_fee = msg[ 7 ];
-  ulong _parent_slot = msg[ 8 ];
+  ulong compute_units            = msg[ 5 ];
+  ulong transaction_fee          = msg[ 6 ];
+  ulong priority_fee             = msg[ 7 ];
+  ulong tips                     = msg[ 8 ];
+  ulong _parent_slot             = msg[ 9 ];
 
   fd_gui_slot_t * slot = gui->slots[ _slot % FD_GUI_SLOTS_CNT ];
   if( FD_UNLIKELY( slot->slot!=_slot ) ) fd_gui_clear_slot( gui, _slot, _parent_slot );
@@ -1206,6 +1220,7 @@ fd_gui_handle_completed_slot( fd_gui_t * gui,
   slot->nonvote_failed_txn_cnt = nonvote_failed_txn_count;
   slot->transaction_fee        = transaction_fee;
   slot->priority_fee           = priority_fee;
+  slot->tips                   = tips;
   if( FD_LIKELY( slot->leader_state==FD_GUI_SLOT_LEADER_UNSTARTED ) ) {
     /* If we were already leader for this slot, then the poh component
        calculated the CUs used and sent them there, rather than the
@@ -1423,6 +1438,20 @@ fd_gui_handle_start_progress( fd_gui_t *    gui,
   fd_http_server_ws_broadcast( gui->http );
 }
 
+static void
+fd_gui_handle_genesis_hash( fd_gui_t *    gui,
+                            uchar const * msg ) {
+  FD_BASE58_ENCODE_32_BYTES(msg, hash_cstr);
+  ulong cluster = fd_genesis_cluster_identify(hash_cstr);
+  char const * cluster_name = fd_genesis_cluster_name(cluster);
+
+  if( FD_LIKELY( strcmp( gui->summary.cluster, cluster_name ) ) ) {
+    gui->summary.cluster = fd_genesis_cluster_name(cluster);
+    fd_gui_printf_cluster( gui );
+    fd_http_server_ws_broadcast( gui->http );
+  }
+}
+
 void
 fd_gui_plugin_message( fd_gui_t *    gui,
                        ulong         plugin_msg,
@@ -1477,6 +1506,10 @@ fd_gui_plugin_message( fd_gui_t *    gui,
     }
     case FD_PLUGIN_MSG_START_PROGRESS: {
       fd_gui_handle_start_progress( gui, msg );
+      break;
+    }
+    case FD_PLUGIN_MSG_GENESIS_HASH_KNOWN: {
+      fd_gui_handle_genesis_hash( gui, msg );
       break;
     }
     default:

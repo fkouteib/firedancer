@@ -104,7 +104,11 @@ struct fd_gui_txn_waterfall {
     ulong verify_failed;
     ulong verify_duplicate;
     ulong dedup_duplicate;
-    ulong resolv_failed;
+    ulong resolv_lut_failed;
+    ulong resolv_expired;
+    ulong resolv_ancient;
+    ulong resolv_no_ledger;
+    ulong resolv_retained;
     ulong pack_invalid;
     ulong pack_expired;
     ulong pack_retained;
@@ -169,6 +173,7 @@ struct fd_gui_slot {
   ulong compute_units;
   ulong transaction_fee;
   ulong priority_fee;
+  ulong tips;
 
   int leader_state;
 
