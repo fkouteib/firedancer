@@ -255,6 +255,9 @@ insert_reward( model_t *       m,
 
   reward_entry_t e;
   make_pubkey( &e.pubkey, account_id, 123UL );
+  for( ulong i=0UL; i<f->entry_cnt; i++ ) {
+    if( FD_UNLIKELY( !memcmp( &f->entry[i].pubkey, &e.pubkey, sizeof(fd_pubkey_t) ) ) ) return;
+  }
   e.lamports         = (fuzz_u8( r ) & 7U) ? 1UL + fuzz_bounded( r, FUZZ_REWARD_LAMPORT_BOUND ) : 0UL;
   e.credits_observed = fuzz_bounded( r, FUZZ_CREDITS_OBSERVED_BOUND );
 
@@ -321,7 +324,7 @@ LLVMFuzzerTestOneInput( uchar const * data,
     .salt = 0xa5c31f27d4e6b890UL ^ data_sz
   };
 
-  void * _stake_rewards = fd_stake_rewards_new( fuzz_mem, FUZZ_MAX_STAKE_ACCOUNTS, FUZZ_MAX_FORKS );
+  void * _stake_rewards = fd_stake_rewards_new( fuzz_mem, FUZZ_MAX_STAKE_ACCOUNTS, FUZZ_MAX_FORKS, 0x1234UL );
   fd_stake_rewards_t * stake_rewards = fd_stake_rewards_join( _stake_rewards);
   if( FD_UNLIKELY( !stake_rewards ) ) FD_LOG_ERR(( "failed to initialize stake rewards" ));
 

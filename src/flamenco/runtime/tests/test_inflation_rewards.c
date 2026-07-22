@@ -841,7 +841,7 @@ test_hash_rewards_into_partitions( void ) {
   FD_TEST( mem );
 
   fd_stake_rewards_t * sr = fd_stake_rewards_join(
-      fd_stake_rewards_new( mem, max_accs, max_forks ) );
+      fd_stake_rewards_new( mem, max_accs, max_forks, 0x1234UL ) );
   FD_TEST( sr );
 
   fd_hash_t blockhash = {{ 0 }};
@@ -885,7 +885,7 @@ test_hash_rewards_into_partitions_empty( void ) {
   FD_TEST( mem );
 
   fd_stake_rewards_t * sr = fd_stake_rewards_join(
-      fd_stake_rewards_new( mem, 1024UL, 4UL ) );
+      fd_stake_rewards_new( mem, 1024UL, 4UL, 0x1234UL ) );
   FD_TEST( sr );
 
   fd_hash_t blockhash = {{ 0 }};
@@ -904,16 +904,18 @@ test_hash_rewards_into_partitions_empty( void ) {
 }
 
 static void
-test_hash_rewards_unique_accounts_per_fork( void ) {
+test_hash_rewards_pubkeys_across_forks( void ) {
   ulong max_accs  = 4UL;
   ulong max_forks = 3UL;
+
+  FD_TEST( fd_stake_rewards_footprint( 2150000UL, 32UL ) < (2UL<<30) );
 
   ulong footprint = fd_stake_rewards_footprint( max_accs, max_forks );
   void * mem = aligned_alloc( fd_stake_rewards_align(), footprint );
   FD_TEST( mem );
 
   fd_stake_rewards_t * sr = fd_stake_rewards_join(
-      fd_stake_rewards_new( mem, max_accs, max_forks ) );
+      fd_stake_rewards_new( mem, max_accs, max_forks, 0x1234UL ) );
   FD_TEST( sr );
 
   uchar fork_idx[3];
@@ -924,8 +926,8 @@ test_hash_rewards_unique_accounts_per_fork( void ) {
 
     for( ulong i=0UL; i<max_accs; i++ ) {
       fd_pubkey_t pubkey = {{ 0 }};
-      pubkey.ul[0] = fork * max_accs + i;
-      pubkey.ul[1] = 0xF00DUL ^ fork;
+      pubkey.ul[0] = (fork & 1UL) * max_accs + i;
+      pubkey.ul[1] = 0xF00DUL;
       fd_stake_rewards_insert( sr, fork_idx[fork], &pubkey, (fork + 1UL)*100UL + i, i );
     }
   }
@@ -933,14 +935,20 @@ test_hash_rewards_unique_accounts_per_fork( void ) {
   for( ulong fork=0UL; fork<max_forks; fork++ ) {
     ulong total_count    = 0UL;
     ulong total_lamports = 0UL;
+    ulong seen           = 0UL;
     for( uint p=0U; p<2U; p++ ) {
       for( fd_stake_rewards_iter_init( sr, fork_idx[fork], p );
            !fd_stake_rewards_iter_done( sr );
            fd_stake_rewards_iter_next( sr, fork_idx[fork] ) ) {
         fd_pubkey_t pubkey; ulong lamports, credits_observed;
         fd_stake_rewards_iter_ele( sr, fork_idx[fork], &pubkey, &lamports, &credits_observed );
-        (void)pubkey;
-        (void)credits_observed;
+        ulong account_idx = pubkey.ul[0] - (fork & 1UL) * max_accs;
+        FD_TEST( account_idx<max_accs );
+        FD_TEST( pubkey.ul[1]==0xF00DUL );
+        FD_TEST( !(seen & (1UL<<account_idx)) );
+        FD_TEST( credits_observed==account_idx );
+        FD_TEST( lamports==(fork + 1UL)*100UL + account_idx );
+        seen |= 1UL<<account_idx;
         total_count++;
         total_lamports += lamports;
       }
@@ -949,11 +957,98 @@ test_hash_rewards_unique_accounts_per_fork( void ) {
     FD_TEST( total_count    == max_accs );
     FD_TEST( total_lamports == max_accs * (fork + 1UL)*100UL + max_accs * (max_accs - 1UL) / 2UL );
     FD_TEST( fd_stake_rewards_total_rewards( sr, fork_idx[fork] ) == total_lamports );
+    FD_TEST( seen == (1UL<<max_accs)-1UL );
   }
+
+  for( ulong fork=0UL; fork<max_forks; fork++ ) fd_stake_rewards_purge( sr, fork_idx[fork] );
+
+  fd_hash_t blockhash = {{ 0 }};
+  uchar next_epoch_fork_idx = fd_stake_rewards_init( sr, 2UL, &blockhash, 200UL, 1U );
+  for( ulong i=0UL; i<max_accs; i++ ) {
+    fd_pubkey_t pubkey = {{ 0 }};
+    pubkey.ul[0] = max_accs + i;
+    fd_stake_rewards_insert( sr, next_epoch_fork_idx, &pubkey, i, i );
+  }
+  ulong next_epoch_cnt = 0UL;
+  for( fd_stake_rewards_iter_init( sr, next_epoch_fork_idx, 0U );
+       !fd_stake_rewards_iter_done( sr );
+       fd_stake_rewards_iter_next( sr, next_epoch_fork_idx ) ) {
+    fd_pubkey_t pubkey; ulong lamports, credits_observed;
+    fd_stake_rewards_iter_ele( sr, next_epoch_fork_idx, &pubkey, &lamports, &credits_observed );
+    next_epoch_cnt++;
+  }
+  FD_TEST( next_epoch_cnt==max_accs );
+
+  blockhash.ul[0] = 1UL;
+  uchar next_epoch_second_fork_idx = fd_stake_rewards_init( sr, 2UL, &blockhash, 201UL, 1U );
+  for( ulong i=0UL; i<max_accs; i++ ) {
+    fd_pubkey_t pubkey = {{ 0 }};
+    pubkey.ul[0] = 2UL*max_accs + i;
+    fd_stake_rewards_insert( sr, next_epoch_second_fork_idx, &pubkey, i, i );
+  }
+  ulong next_epoch_second_cnt  = 0UL;
+  ulong next_epoch_second_seen = 0UL;
+  for( fd_stake_rewards_iter_init( sr, next_epoch_second_fork_idx, 0U );
+       !fd_stake_rewards_iter_done( sr );
+       fd_stake_rewards_iter_next( sr, next_epoch_second_fork_idx ) ) {
+    fd_pubkey_t pubkey; ulong lamports, credits_observed;
+    fd_stake_rewards_iter_ele( sr, next_epoch_second_fork_idx, &pubkey, &lamports, &credits_observed );
+    ulong account_idx = pubkey.ul[0] - 2UL*max_accs;
+    FD_TEST( account_idx<max_accs );
+    FD_TEST( !(next_epoch_second_seen & (1UL<<account_idx)) );
+    FD_TEST( lamports==account_idx );
+    FD_TEST( credits_observed==account_idx );
+    next_epoch_second_seen |= 1UL<<account_idx;
+    next_epoch_second_cnt++;
+  }
+  FD_TEST( next_epoch_second_cnt==max_accs );
+  FD_TEST( next_epoch_second_seen==(1UL<<max_accs)-1UL );
 
   free( mem );
 
-  FD_LOG_NOTICE(( "test_hash_rewards_unique_accounts_per_fork: PASSED" ));
+  FD_LOG_NOTICE(( "test_hash_rewards_pubkeys_across_forks: PASSED" ));
+}
+
+static void
+test_hash_rewards_purge_first_fork( void ) {
+  ulong max_accs  = 4UL;
+  ulong max_forks = 2UL;
+
+  ulong footprint = fd_stake_rewards_footprint( max_accs, max_forks );
+  void * mem = aligned_alloc( fd_stake_rewards_align(), footprint );
+  FD_TEST( mem );
+
+  fd_stake_rewards_t * sr = fd_stake_rewards_join(
+      fd_stake_rewards_new( mem, max_accs, max_forks, 0x1234UL ) );
+  FD_TEST( sr );
+
+  fd_hash_t blockhash = {{ 0 }};
+  fd_pubkey_t pubkey = {{ 0 }};
+
+  uchar first_fork_idx = fd_stake_rewards_init( sr, 1UL, &blockhash, 100UL, 1U );
+  fd_stake_rewards_insert( sr, first_fork_idx, &pubkey, 1UL, 1UL );
+  pubkey.ul[0] = 1UL;
+  fd_stake_rewards_insert( sr, first_fork_idx, &pubkey, 2UL, 2UL );
+  fd_stake_rewards_purge( sr, first_fork_idx );
+
+  blockhash.ul[0] = 1UL;
+  uchar second_fork_idx = fd_stake_rewards_init( sr, 1UL, &blockhash, 101UL, 1U );
+  pubkey.ul[0] = 2UL;
+  fd_stake_rewards_insert( sr, second_fork_idx, &pubkey, 3UL, 3UL );
+
+  fd_stake_rewards_iter_init( sr, second_fork_idx, 0U );
+  FD_TEST( !fd_stake_rewards_iter_done( sr ) );
+  fd_pubkey_t actual_pubkey; ulong lamports, credits_observed;
+  fd_stake_rewards_iter_ele( sr, second_fork_idx, &actual_pubkey, &lamports, &credits_observed );
+  FD_TEST( !memcmp( &actual_pubkey, &pubkey, sizeof(fd_pubkey_t) ) );
+  FD_TEST( lamports==3UL );
+  FD_TEST( credits_observed==3UL );
+  fd_stake_rewards_iter_next( sr, second_fork_idx );
+  FD_TEST( fd_stake_rewards_iter_done( sr ) );
+
+  free( mem );
+
+  FD_LOG_NOTICE(( "test_hash_rewards_purge_first_fork: PASSED" ));
 }
 
 static void
@@ -1445,7 +1540,8 @@ main( int     argc,
   test_epoch_rewards_sysvar_lifecycle( mini );
   test_hash_rewards_into_partitions();
   test_hash_rewards_into_partitions_empty();
-  test_hash_rewards_unique_accounts_per_fork();
+  test_hash_rewards_pubkeys_across_forks();
+  test_hash_rewards_purge_first_fork();
   test_distribute_rewards_capitalization( mini );
   test_distribute_empty_rewards( mini );
   test_epoch_credit_rewards_and_history_update( mini );
